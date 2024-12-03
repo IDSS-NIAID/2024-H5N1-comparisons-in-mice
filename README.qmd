@@ -1,0 +1,240 @@
+---
+format: gfm
+execute:
+  echo: false
+  fig-dpi: 300
+---
+
+![DOI](https://img.shields.io/badge/DOI-Submitted-yellow)
+[![Data](https://img.shields.io/badge/Data-10.6084/m9.figshare.27679509-green)](https://doi.org/10.6084/m9.figshare.27679509)
+[![Preprint](https://img.shields.io/badge/Preprint-10.1101/2024.11.19.624162-blue)](https://www.biorxiv.org/content/10.1101/2024.11.19.624162v1)
+
+```{r setup}
+#| include: false
+
+# packages used for data wrangling
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+
+# packages used for cluster analysis
+library(mice)
+library(clValid)
+library(NbClust)
+
+# packages used for data visualization
+library(ggplot2)
+library(RColorBrewer)
+library(cowplot)
+```
+
+## Enhanced encephalitic tropism of bovine H5N1 compared to the Vietnam H5N1 isolate in mice
+
+This repository contains the data and code for the PCA analysis discussed in the manuscript, "Enhanced encephalitic tropism of bovine H5N1 compared to the Vietnam H5N1 isolate in mice". The data will be available on [Figshare](https://doi.org/10.6084/m9.figshare.27679509) after publication.
+
+```{r data wrangling}
+#| include: false
+
+### download data ###
+# -- to do --
+
+
+### import data ###
+dat <- read_excel("2024-08-28_H5N1data_Compiled.xlsx", skip = 1) |>
+  rename(Day = `Day of harvest`,
+         Weight = `Weight at euthanasia (%)`,
+         Nasal_titer = `Nasal turbinates`,
+         Lung_titer = Lung,
+         Brain_titer = Brain)
+
+
+# clean up column names for cytokine protein levels
+proteins <- c('CXCL1', 'IFN-y', 'IL-1B', 'IL-2', 'IL-4', 'IL-5', 'IL-6', 'IL-10', 'IL-12p70', 'TNFa')
+
+for(p in proteins)
+{
+  names(dat)[starts_with(p, vars = names(dat))][1:3] <- paste0(p, "_prot_", c('brain', 'nasal', 'lung'))
+}
+
+
+# clean up column names for cytokine mRNA levels
+mrnas <- c('IFNa', 'IFNb', 'IFNg', 'IFNl2', 'IL1b', 'IL6', 'TNFa', 'ISG15', 'ISG56', 'Mx1', 'OAS1')
+
+for(m in mrnas)
+{
+  names(dat)[starts_with(paste0(m, '.'), vars = names(dat))] <- paste0(m, "_mRNA_", c('brain', 'nasal', 'lung'))
+}
+
+
+### convert to long format ###
+
+# variables to convert column names so that we are working with the same column name formats for everything
+name_conversion <- tibble(colnumbers = starts_with(c('IFNa', 'IFNb', 'IFNg', 'IFNl2', 'IL1b', 'IL6', 'TNFa', 'ISG15', 'ISG56', 'Mx1', 'OAS1', 'CXCL1', 'IFN-y', 'IL-1B', 'IL-2', 'IL-4', 'IL-5', 'IL-6', 'IL-10', 'IL-12p70', 'TNFa'), vars = names(dat)),
+                          colname = names(dat)[colnumbers],
+                          name_parts = str_split(colname, "_"),
+                          tissue = map_chr(name_parts, ~.x[3]),
+                          chemokine = map_chr(name_parts, ~.x[1]),
+                          type = map_chr(name_parts, ~.x[2]),
+                          new_colname = paste(tissue, chemokine, type, sep = "_"))
+convert_names <- name_conversion$new_colname
+names(convert_names) <- name_conversion$colname
+
+
+dat_long <- dat |>
+  plyr::rename(convert_names) |>
+
+  # this doesn't fit into the PCA comparing the different tissues
+  select(-Weight) |>
+
+  # make super long (we will get a warning for type in titer - this is OK)
+  pivot_longer(cols = -c(1:5),
+               names_sep = "_",
+               names_to = c("tissue", "chemokine", "type"),
+               values_to = "value") |>
+
+  mutate(tissue = tolower(tissue)) |>
+
+  # widen back out some for PCA with tissue as a factor
+  pivot_wider(names_from = c("chemokine", "type"), values_from = value) |>
+
+  rename(titer = titer_NA)
+
+
+# fix some column names
+names(dat_long) <- gsub("-", "", names(dat_long))
+
+
+# log10 transform titer
+for(i in 7:dim(dat_long)[2])
+{
+  dat_long[[i]] <- log10(dat_long[[i]])
+}
+```
+
+```{r pca}
+#| include: false
+
+### missingness and variability checks ###
+
+# these will flag columns we want to drop for PCA
+# (not including categorical data in columns 1:6)
+drop_day3 <- c(rep(TRUE, 6), rep(FALSE, dim(dat_long)[2] - 6))
+names(drop_day3) <- names(dat_long)
+
+drop_endpoint <- drop_day3
+
+# we'll track for day 3 and the endpoint separately
+day3 <- dat_long$Day == 3
+
+for(j in 7:dim(dat_long)[2])
+{
+  # tabulate missingness of jth column by tissue
+  miss_3   <- table(is.na(dat_long[[j]][ day3]), dat_long$tissue[ day3]) / sum( day3)
+  miss_end <- table(is.na(dat_long[[j]][!day3]), dat_long$tissue[!day3]) / sum(!day3)
+
+  # check for variability
+  var_3   <- var(dat_long[[j]][ day3], na.rm = TRUE)
+  var_end <- var(dat_long[[j]][!day3], na.rm = TRUE)
+  
+  # check if any of the tissues has > 20% missingness or is essentially constant
+  drop_day3    [j] <- any(miss_3  [-1,] > 0.2) | (var_3   < 1e-6)
+  drop_endpoint[j] <- any(miss_end[-1,] > 0.2) | (var_end < 1e-6)
+}
+
+
+### PCA ###
+
+dat_pca_3 <- filter(dat_long, Day == 3)[,!drop_day3] |>
+
+  mice() |>                                      # impute missing values
+  complete() |>
+
+  princomp(cor = TRUE)                           # PCA
+
+pca_results_3 <- cbind(dat_long[day3, 1:6], dat_pca_3$scores)
+
+
+dat_pca_end <- filter(dat_long, Day > 3)[,!drop_day3] |>
+
+  mice() |>                                      # impute missing values
+  complete() |>
+
+  princomp(cor = TRUE)                           # PCA
+
+pca_results_end <- cbind(dat_long[!day3, 1:6], dat_pca_end$scores)
+
+
+### clustering ###
+
+if(FALSE) # only run this part manually - not explicitly included in README
+{
+  # check optimal number of clusters
+  clValid(dat_pca_3$scores, 2:10, clMethods = c("kmeans"), validation = "internal") |>
+    plot()
+  
+  clValid(dat_pca_end$scores, 2:10, clMethods = c("kmeans"), validation = "internal") |>
+    plot()
+  
+  # suggests 2 clusters for Day 3
+  nb_day3 <- NbClust(dat_pca_3$scores, distance = "euclidean", 
+                     min.nc = 2, max.nc = 10, method = "kmeans")
+
+  # suggests 3 clusters for endpoint
+  nb_end <- NbClust(dat_pca_end$scores, distance = "euclidean",
+                    min.nc = 2, max.nc = 10, method = "kmeans") 
+}
+
+# add cluster information to the data
+pca_results_3$cluster <- kmeans(dat_pca_3$scores, centers = 2)$cluster
+pca_results_end$cluster <- kmeans(dat_pca_end$scores, centers = 3)$cluster
+```
+
+The Principal Component Analysis (PCA) of viral titer, protein abundance and mRNA levels in brain, lung and nasal turbinates of mice, separated by day of harvest (day 3 and endpoint).
+
+Analysis at 3 days post inoculation resulted in two distinct clusters: the smaller cluster contained only lung samples, all but one of which were high dose groups. The remaining low-dose lung samples, all brain, and all nasal samples were contained in the larger cluster.
+
+```{r}
+# one figure to rule them all!
+make_pca_plot <- function(pca_results, lbl)
+{
+  hulls <- pca_results |>
+    group_by(cluster) |>
+    summarise(hull = list(chull(Comp.1, Comp.2))) |>
+    pull(hull)
+
+  # base plot
+  pca_plt <- mutate(pca_results,
+                    Group = paste(Virus, Dose)) |>
+    ggplot(aes(x = Comp.1, y = Comp.2, color = Group, shape = tissue))
+
+  for(i in 1:length(hulls)) {
+    pca_plt <- pca_plt +
+      geom_polygon(data = filter(pca_results, cluster == i)[hulls[[i]],],
+                   aes(Comp.1, Comp.2, group = cluster),
+                   fill = 'grey97', color = 'black', linewidth = 0.1)
+  }
+
+  pca_plt +
+    geom_point() +
+    labs(x = paste0("PC 1 (", lbl, ")"),
+         y = paste0("PC 2 (", lbl, ")"),
+         shape = 'Tissue') +
+    scale_color_brewer(palette = "Paired",
+                       labels = expression(paste('Bovine ', 10^2),
+                                           paste('Bovine ', 10^4),
+                                           paste('VN1203 ', 10^2),
+                                           paste('VN1203 ', 10^4))) +
+    theme_cowplot() +
+    theme(plot.title = element_text(hjust = -0.2))
+}
+
+make_pca_plot(pca_results_3, 'Day 3')
+```
+
+In the PCA of samples collected at endpoint, the optimal number of clusters was determined to be three, with clusters similar in size. One cluster was primarily composed of VN1203-exposed samples, while a second cluster mainly contained Bov342-exposed samples, both predominantly from brain and nasal turbinate samples. The third cluster contained only lung samples, where all but one of the VN1203exposed mice clustered together with most of the high-dose Bov342-exposed mice. Most of the low-dose Bov342-exposed lung tissues clustered with the Bov342-exposed brain and nasal samples.
+
+```{r}
+make_pca_plot(pca_results_end, 'Endpoint')
+```
