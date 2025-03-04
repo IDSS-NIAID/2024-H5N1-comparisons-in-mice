@@ -146,6 +146,7 @@ for(j in 7:dim(dat_long)[2])
 
 ### PCA ###
 
+set.seed(238974)
 dat_pca_3 <- filter(dat_long, Day == 3)[,!drop_day3] |>
 
   mice() |>                                      # impute missing values
@@ -154,7 +155,7 @@ dat_pca_3 <- filter(dat_long, Day == 3)[,!drop_day3] |>
   princomp(cor = TRUE)                           # PCA
 
 pca_results_3 <- cbind(dat_long[day3, 1:6], dat_pca_3$scores)
-
+pca_pct_variability_3 <- cumsum(dat_pca_3$sdev) / sum(dat_pca_3$sdev) * 100
 
 dat_pca_end <- filter(dat_long, Day > 3)[,!drop_day3] |>
 
@@ -164,6 +165,7 @@ dat_pca_end <- filter(dat_long, Day > 3)[,!drop_day3] |>
   princomp(cor = TRUE)                           # PCA
 
 pca_results_end <- cbind(dat_long[!day3, 1:6], dat_pca_end$scores)
+pca_pct_variability_end <- cumsum(dat_pca_end$sdev) / sum(dat_pca_end$sdev) * 100
 
 
 ### clustering ###
@@ -191,7 +193,7 @@ pca_results_3$cluster <- kmeans(dat_pca_3$scores, centers = 2)$cluster
 pca_results_end$cluster <- kmeans(dat_pca_end$scores, centers = 3)$cluster
 ```
 
-The Principal Component Analysis (PCA) of viral titer, protein abundance and mRNA levels in brain, lung and nasal turbinates of mice, separated by day of harvest (day 3 and endpoint).
+The Principal Component Analysis (PCA) of viral titer, protein abundance and mRNA levels in brain, lung and nasal turbinates of mice, separated by day of harvest (day 3 and endpoint). The first two principal components accounted for `r round(pca_pct_variability_3[2])`% and `r round(pca_pct_variability_end[2])`% of total sample variability in day 3 and endpoint samples, respectively.
 
 Analysis at 3 days post inoculation resulted in two distinct clusters: the smaller cluster contained only lung samples, all but one of which were high dose groups. The remaining low-dose lung samples, all brain, and all nasal samples were contained in the larger cluster.
 

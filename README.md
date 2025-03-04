@@ -14,7 +14,9 @@ after publication.
 
 The Principal Component Analysis (PCA) of viral titer, protein abundance
 and mRNA levels in brain, lung and nasal turbinates of mice, separated
-by day of harvest (day 3 and endpoint).
+by day of harvest (day 3 and endpoint). The first two principal
+components accounted for 36% and 48% of total sample variability in day
+3 and endpoint samples, respectively.
 
 Analysis at 3 days post inoculation resulted in two distinct clusters:
 the smaller cluster contained only lung samples, all but one of which
