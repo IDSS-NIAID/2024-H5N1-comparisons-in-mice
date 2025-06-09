@@ -1,6 +1,6 @@
 
 
-![DOI](https://img.shields.io/badge/DOI-Submitted-yellow.png)
+[![DOI](https://img.shields.io/badge/DOI-10.1038/s44298--025--00121--0-green.png)](https://doi.org/10.1038/s44298-025-00121-0)
 [![Data](https://img.shields.io/badge/Data-10.6084/m9.figshare.27679509-green)](https://doi.org/10.6084/m9.figshare.27679509)
 [![Preprint](https://img.shields.io/badge/Preprint-10.1101/2024.11.19.624162-blue)](https://www.biorxiv.org/content/10.1101/2024.11.19.624162v1)
 
